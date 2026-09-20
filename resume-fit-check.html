@@ -165,6 +165,15 @@
   .weak li { margin: 4px 0; color: var(--ink); }
   .weak { margin: 0; padding-left: 20px; }
 
+  .pdfnote {
+    margin: 0 0 12px; padding: 10px 12px; border: 1px solid var(--line);
+    border-radius: 8px; background: var(--surface-2); color: var(--muted);
+    font-size: 13px; line-height: 1.5;
+  }
+  .pdfnote b { color: var(--ink); font-weight: 600; }
+  .pdfnote ul { margin: 6px 0 0; padding-left: 20px; }
+  .pdfnote li { margin: 3px 0; }
+
   .resume-actions { display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
   pre.tailored {
     background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px;
@@ -284,6 +293,7 @@
         <button id="save-pdf" hidden>Download PDF</button>
         <button id="save" hidden>Save LaTeX (.tex)</button>
       </div>
+      <div class="pdfnote" id="pdf-note" hidden></div>
       <pre class="tailored" id="tailored"></pre>
     </section>
   </div>
@@ -431,7 +441,7 @@ RUBRIC:
 
   const STRUCT_GUIDE = `Convert the resume below into JSON. Reply with ONLY a JSON object shaped exactly like this:
 {
-  "name": "<full name>",
+  "name": "<full name in normal capitalization (First Last), even if the resume prints it in all caps>",
   "tagline": "<the role/subtitle line under the name, or null>",
   "contact": ["<each contact item as its own string: location, email, phone, URL>"],
   "sections": [
@@ -605,6 +615,7 @@ Reply with ONLY a JSON object:
 
   let ctl = null;
   let lastStruct = null;
+  let lastAnalysis = null; // the graded requirements, reused to score bullets on export
   const qBtn = $("run-questions");
   const setBusy = (b) => { runBtn.disabled = b; qBtn.disabled = b; stopBtn.hidden = !b; };
   const setStatus = (msg, isErr) => {
@@ -794,6 +805,8 @@ Reply with ONLY a JSON object:
     resumeCard.hidden = !(!isReject && tailored);
     $("tailored").textContent = tailored;
     lastStruct = null; // rebuilt per tailored resume, on export
+    lastAnalysis = d;
+    $("pdf-note").hidden = true;
 
     results.hidden = false;
     results.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -922,6 +935,81 @@ Reply with ONLY a JSON object:
     return LATEX_PREAMBLE + "\n%-------------------------------------------\n\\begin{document}\n\n" + L.join("\n") + "\n\n\\end{document}\n";
   }
 
+  // The PDF export is always exactly one page. It gets there by shrinking type
+  // to PDF_COMFORT_SCALE first; past that the type would be too small to read,
+  // so it drops the weakest bullet instead and tries again. PDF_MIN_SCALE is the
+  // last resort, for a resume with nothing left to drop. HEADER_RULE_GAP lifts a
+  // section title off its rule.
+  const PDF_MIN_SCALE = 0.72, PDF_COMFORT_SCALE = 0.85, HEADER_RULE_GAP = 3.5;
+
+  // Words that say nothing about whether a bullet earns its place.
+  const STOP_WORDS = new Set(("a an and are as at be been being but by can could did do does for from had has have " +
+    "how in into is it its may might more most must not of off on one only or other our out over own per she her his " +
+    "he they them their there these this those to too under up use used using very was we were what when where which " +
+    "who will with within would you your able across also any each many new both same such than that the then they've " +
+    "work works working worked including include includes well").split(" "));
+
+  const termsOf = (t) => (String(t ?? "").toLowerCase().match(/[a-z][a-z0-9+#.]*/g) || [])
+    .map((w) => w.replace(/[.]+$/, ""))
+    .filter((w) => w.length >= 3 && !STOP_WORDS.has(w));
+
+  // What this job actually rewards. The analysis already graded the JD's
+  // requirements, so weight those the way the rubric does -- required over
+  // preferred -- and treat the raw posting as the weak background signal.
+  const jdWeights = (jdText, analysis) => {
+    const w = new Map();
+    const add = (text, weight) => {
+      for (const t of termsOf(text)) if ((w.get(t) || 0) < weight) w.set(t, weight);
+    };
+    add(jdText, 1);
+    for (const r of (analysis && Array.isArray(analysis.requirements) ? analysis.requirements : [])) {
+      add(r && r.requirement, String(r && r.type).toLowerCase() === "preferred" ? 2 : 3);
+    }
+    for (const k of (analysis && Array.isArray(analysis.missing_keywords) ? analysis.missing_keywords : [])) add(k, 3);
+    return w;
+  };
+
+  // A bullet is worth keeping when it speaks to this job and carries a hard
+  // number. Density, not raw overlap, so a long bullet can't buy its place by
+  // sheer word count.
+  const bulletScore = (text, weights, entryIdx, bulletIdx) => {
+    const uniq = new Set(termsOf(text));
+    let total = 0;
+    for (const t of uniq) total += weights.get(t) || 0;
+    const relevance = total / Math.sqrt(uniq.size || 1);
+    const hasMetric = /\d+\s*%|\$\s*\d|\b\d{2,}\b/.test(String(text ?? ""));
+    const substance = relevance * 2 + (hasMetric ? 3 : 0);
+    // Position only separates bullets of similar substance -- an older job, or a
+    // lower bullet within a job, goes first. It is capped well under the
+    // substance range on purpose: on a resume with many jobs an uncapped,
+    // per-index penalty would eventually outweigh what a bullet actually says,
+    // and start cutting real evidence from old jobs ahead of recent filler.
+    const position = Math.min(entryIdx, 4) * 0.15 + Math.min(bulletIdx, 6) * 0.1;
+    return substance - position;
+  };
+
+  // The weakest droppable bullet in the resume, or null when nothing can go.
+  // Every entry keeps at least one bullet: a job with no lines under it reads
+  // as an omission, which is worse than a page that had to shrink.
+  const weakestBullet = (data, weights) => {
+    let worst = null;
+    (data.sections || []).forEach((sec, si) => {
+      (sec.entries || []).forEach((e, ei) => {
+        const bullets = (e.bullets || []).filter(Boolean);
+        if (bullets.length < 2) return;
+        bullets.forEach((text, bi) => {
+          const score = bulletScore(text, weights, ei, bi);
+          // Ties go to the longer bullet: same value, more page bought back.
+          if (!worst || score < worst.score - 1e-9 ||
+              (Math.abs(score - worst.score) <= 1e-9 && String(text).length > String(worst.text).length)) {
+            worst = { si, ei, bi, text: String(text), score };
+          }
+        });
+      });
+    });
+    return worst;
+  };
+
   let pdflibReady = null;
   async function buildPdfBlob(s) {
     pdflibReady ??= loadScript("https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js");
@@ -934,7 +1022,6 @@ Reply with ONLY a JSON object:
       ital: await doc.embedFont(StandardFonts.TimesRomanItalic),
     };
     const W = 612, H = 792, M = 40, CW = W - 2 * M;
-    let page = doc.addPage([W, H]), y = H - M;
 
     // Standard fonts use WinAnsi encoding; swap what it can't represent.
     const san = (t) => String(t ?? "")
@@ -952,62 +1039,153 @@ Reply with ONLY a JSON object:
       if (line) out.push(line);
       return out.length ? out : [""];
     };
-    const need = (h) => { if (y - h < M) { page = doc.addPage([W, H]); y = H - M; } };
-    const put = (t, f, sz, x) => { page.drawText(t, { x, y: y - sz, size: sz, font: f }); };
-    const line = (t, f, sz, x, extra) => { need(sz * 1.3); put(san(t), f, sz, x); y -= sz * 1.3 + (extra || 0); };
-    const centered = (t, f, sz, extra) => { need(sz * 1.3); put(san(t), f, sz, (W - wid(san(t), f, sz)) / 2); y -= sz * 1.3 + (extra || 0); };
-    const twoCol = (lt, lf, rt, rf, sz) => {
-      need(sz * 1.3);
-      const right = san(rt || "");
-      const rw = right ? wid(right, rf, sz) : 0;
-      const leftLines = wrap(lt || "", lf, sz, CW - rw - 12);
-      put(leftLines[0], lf, sz, M);
-      if (right) put(right, rf, sz, W - M - rw);
-      y -= sz * 1.3;
-      for (const extraLine of leftLines.slice(1)) { need(sz * 1.3); put(extraLine, lf, sz, M); y -= sz * 1.3; }
-    };
-    const wrapped = (t, f, sz, x, w, lead) => {
-      for (const ln of wrap(t, f, sz, w)) { need(sz * (lead || 1.28)); put(ln, f, sz, x); y -= sz * (lead || 1.28); }
-    };
 
-    centered(String(s.name || "").toUpperCase(), F.bold, 20, 3);
-    if (s.tagline) centered(s.tagline, F.reg, 9.5, 1);
-    centered((Array.isArray(s.contact) ? s.contact : []).join("  |  "), F.reg, 9.5);
+    // One full layout pass at type scale k. With a null page it only measures,
+    // so the caller can search for the largest scale that still fits one page.
+    // Nothing ever starts a second page: once the column is full, emitting stops
+    // and the pass reports it, which is what drives the search down a notch.
+    const layout = (k, page, data) => {
+      const S = (n) => n * k;
+      let y = H - M, full = false, dropped = 0;
+      const need = (h) => {
+        if (full) return false;
+        if (y - h >= M) return true;
+        full = true; dropped++; return false;
+      };
+      const put = (t, f, sz, x) => { if (page) page.drawText(t, { x, y: y - sz, size: sz, font: f }); };
+      const centered = (t, f, sz, extra) => {
+        if (!need(sz * 1.3)) return;
+        put(san(t), f, sz, (W - wid(san(t), f, sz)) / 2); y -= sz * 1.3 + (extra || 0);
+      };
+      const twoCol = (lt, lf, rt, rf, sz) => {
+        if (!need(sz * 1.3)) return;
+        const right = san(rt || "");
+        const rw = right ? wid(right, rf, sz) : 0;
+        const leftLines = wrap(lt || "", lf, sz, CW - rw - 12);
+        put(leftLines[0], lf, sz, M);
+        if (right) put(right, rf, sz, W - M - rw);
+        y -= sz * 1.3;
+        for (const extraLine of leftLines.slice(1)) {
+          if (!need(sz * 1.3)) return;
+          put(extraLine, lf, sz, M); y -= sz * 1.3;
+        }
+      };
+      const wrapped = (t, f, sz, x, w, lead) => {
+        for (const ln of wrap(t, f, sz, w)) {
+          if (!need(sz * (lead || 1.28))) return;
+          put(ln, f, sz, x); y -= sz * (lead || 1.28);
+        }
+      };
 
-    for (const sec of s.sections) {
-      y -= 7; need(24);
-      line(String(sec.title || "").toUpperCase(), F.reg, 11.5, M, -3);
-      page.drawLine({ start: { x: M, y: y }, end: { x: W - M, y: y }, thickness: 0.8 });
-      y -= 7;
-      if (sec.paragraph) wrapped(sec.paragraph, F.reg, 9.7, M, CW);
-      for (const e of sec.entries || []) {
-        y -= 3;
-        twoCol(e.org || "", F.bold, e.dates || "", F.reg, 10);
-        if (e.line || e.location) twoCol(e.line || "", F.ital, e.location || "", F.ital, 9.7);
-        if (e.tech) wrapped(e.tech, F.ital, 9.7, M, CW);
-        for (const bl of (e.bullets || []).filter(Boolean)) {
-          const rows = wrap(bl, F.reg, 9.7, CW - 22);
-          need(9.7 * 1.28);
-          put("•", F.reg, 9.7, M + 10);
-          put(rows[0], F.reg, 9.7, M + 22);
-          y -= 9.7 * 1.28;
-          for (const r of rows.slice(1)) { need(9.7 * 1.28); put(r, F.reg, 9.7, M + 22); y -= 9.7 * 1.28; }
+      // Mixed case in the text layer so ATS autofill extracts "First Last", not "FIRST LAST".
+      centered(String(data.name || ""), F.bold, S(21), S(3));
+      if (data.tagline) centered(data.tagline, F.reg, S(9.5), S(1));
+      centered((Array.isArray(data.contact) ? data.contact : []).join("  |  "), F.reg, S(9.5));
+
+      for (const sec of data.sections || []) {
+        const st = S(11.5);
+        // Header, then a little air, then the rule: the title sits just above
+        // the line rather than on it. Only open a section with room to say something.
+        if (!need(S(7) + st + HEADER_RULE_GAP * k + S(6) + S(9.7) * 1.28)) break;
+        y -= S(7);
+        put(san(String(sec.title || "").toUpperCase()), F.reg, st, M);
+        y -= st + HEADER_RULE_GAP * k;
+        if (page) page.drawLine({ start: { x: M, y: y }, end: { x: W - M, y: y }, thickness: 0.8 });
+        y -= S(6);
+        if (sec.paragraph) wrapped(sec.paragraph, F.reg, S(9.7), M, CW);
+        for (const e of sec.entries || []) {
+          y -= S(3);
+          twoCol(e.org || "", F.bold, e.dates || "", F.reg, S(10));
+          if (e.line || e.location) twoCol(e.line || "", F.ital, e.location || "", F.ital, S(9.7));
+          if (e.tech) wrapped(e.tech, F.ital, S(9.7), M, CW);
+          for (const bl of (e.bullets || []).filter(Boolean)) {
+            const bs = S(9.7);
+            const rows = wrap(bl, F.reg, bs, CW - S(22));
+            if (!need(bs * 1.28)) break;
+            put("•", F.reg, bs, M + S(10));
+            put(rows[0], F.reg, bs, M + S(22));
+            y -= bs * 1.28;
+            for (const r of rows.slice(1)) {
+              if (!need(bs * 1.28)) break;
+              put(r, F.reg, bs, M + S(22)); y -= bs * 1.28;
+            }
+          }
+        }
+        for (const p of sec.pairs || []) {
+          const ps = S(9.7);
+          const label = san((p.label || "") + ": ");
+          const lw = wid(label, F.bold, ps);
+          const rows = wrap(p.text || "", F.reg, ps, CW - lw);
+          if (!need(ps * 1.3)) break;
+          put(label, F.bold, ps, M);
+          put(rows[0], F.reg, ps, M + lw);
+          y -= ps * 1.3;
+          for (const r of rows.slice(1)) {
+            if (!need(ps * 1.3)) break;
+            put(r, F.reg, ps, M); y -= ps * 1.3;
+          }
         }
       }
-      for (const p of sec.pairs || []) {
-        const label = san((p.label || "") + ": ");
-        const lw = wid(label, F.bold, 9.7);
-        const rows = wrap(p.text || "", F.reg, 9.7, CW - lw);
-        need(9.7 * 1.3);
-        put(label, F.bold, 9.7, M);
-        put(rows[0], F.reg, 9.7, M + lw);
-        y -= 9.7 * 1.3;
-        for (const r of rows.slice(1)) { need(9.7 * 1.3); put(r, F.reg, 9.7, M); y -= 9.7 * 1.3; }
-      }
+      return dropped === 0;
+    };
+
+    // Largest scale at which this content still fits one page, or null.
+    const fitScale = (data, floor) => {
+      for (let t = 1; t >= floor - 1e-9; t -= 0.02) if (layout(t, null, data)) return t;
+      return null;
+    };
+
+    // Shrink to the comfort floor; past that, cut the weakest bullet rather than
+    // the type, and re-search from full size -- a cut often buys back a point or
+    // two of scale. Work on a copy: the same struct feeds the LaTeX export, which
+    // keeps every bullet.
+    const weights = jdWeights(jdEl.value || "", lastAnalysis);
+    const work = JSON.parse(JSON.stringify(s));
+    const dropped = [];
+    let k = fitScale(work, PDF_COMFORT_SCALE);
+    while (k === null) {
+      const cut = weakestBullet(work, weights);
+      if (!cut) break;
+      work.sections[cut.si].entries[cut.ei].bullets.splice(cut.bi, 1);
+      dropped.push(cut.text);
+      k = fitScale(work, PDF_COMFORT_SCALE);
     }
+    // Nothing left to drop and it still overruns: shrink the rest of the way.
+    if (k === null) k = fitScale(work, PDF_MIN_SCALE) ?? PDF_MIN_SCALE;
+    const fitted = layout(k, doc.addPage([W, H]), work);
+
     const bytes = await doc.save();
-    return new Blob([bytes], { type: "application/pdf" });
+    return { blob: new Blob([bytes], { type: "application/pdf" }), fitted, dropped };
   }
+
+  // The PDF can only hold one page, so it sometimes drops a bullet. Whatever it
+  // dropped is named here: the .tex export and the text above still have it.
+  const showPdfNote = (dropped, fitted) => {
+    const el = $("pdf-note");
+    el.replaceChildren();
+    if (!dropped.length && fitted) { el.hidden = true; return; }
+    el.hidden = false;
+    const head = document.createElement("div");
+    if (dropped.length) {
+      const b = document.createElement("b");
+      b.textContent = `Cut ${dropped.length} bullet${dropped.length > 1 ? "s" : ""} from the PDF to keep it to one page`;
+      head.append(b, document.createTextNode(" \u2014 the weakest against this posting. The .tex export and the text above keep everything."));
+    } else {
+      const b = document.createElement("b");
+      b.textContent = "The PDF overran one page.";
+      head.append(b, document.createTextNode(" Every entry is down to its last bullet, so nothing more could be cut. Shorten a few bullets by hand."));
+    }
+    el.append(head);
+    if (dropped.length) {
+      const ul = document.createElement("ul");
+      for (const d of dropped) {
+        const li = document.createElement("li");
+        li.textContent = d.length > 160 ? d.slice(0, 157) + "..." : d;
+        ul.append(li);
+      }
+      el.append(ul);
+    }
+  };
 
   (async () => {
     const downloads = await getDownloads();
@@ -1021,9 +1199,14 @@ Reply with ONLY a JSON object:
       try {
         const s = await ensureStruct();
         setStatus("Rendering the PDF...");
-        const blob = await buildPdfBlob(s);
+        const { blob, fitted, dropped } = await buildPdfBlob(s);
         await downloads.save({ filename: "tailored-resume.pdf", data: blob });
-        setStatus("Saved tailored-resume.pdf.");
+        showPdfNote(dropped, fitted);
+        setStatus(!fitted
+          ? "Saved tailored-resume.pdf, but it still overran one page with nothing left to cut."
+          : dropped.length
+            ? `Saved tailored-resume.pdf. Cut ${dropped.length} weak bullet${dropped.length > 1 ? "s" : ""} to hold one page.`
+            : "Saved tailored-resume.pdf.", !fitted);
       } catch (e) {
         if (e && e.code === "no_resume") setStatus("Run Check fit first; the export needs a tailored resume.", true);
         else if (e && e.code === "declined") setStatus("Save canceled.");
