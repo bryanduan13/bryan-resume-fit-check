@@ -4,3 +4,7 @@ node_modules/
 *.out
 *.pdf
 .DS_Store
+
+# Personal data (background bank, test resume) — never committed
+*.local.js
+*.local.txt

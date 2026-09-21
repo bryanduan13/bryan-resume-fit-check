@@ -353,7 +353,7 @@ SCORING: each JD requirement gets STRONG (explicit demonstrated evidence), PARTI
 
 Cover every explicit requirement in the JD, required and preferred, in "requirements". Keep the tailored resume complete and self-contained (contact line, summary, experience, skills, education). Preserve every date, employer, and metric exactly as given.
 
-Evidence sources: this tool has a single known user, and the BACKGROUND BANK below the rubric is verified true experience for that candidate. Count bank facts as real evidence when judging each requirement; when a requirement's best evidence comes from the bank but does not appear on the resume, prefix that requirement's "evidence" value with "[not on resume] " so the gap is visible. The tailored resume may draw on bank facts too, phrased at exactly their stated strength (coursework stays coursework, workflow stays workflow), and should surface the bank facts this JD rewards. Anything found in neither the resume nor the bank stays out entirely.
+Evidence sources: the BACKGROUND BANK below the rubric, when one is supplied, is verified true experience for this candidate. Count bank facts as real evidence when judging each requirement; when a requirement's best evidence comes from the bank but does not appear on the resume, prefix that requirement's "evidence" value with "[not on resume] " so the gap is visible. The tailored resume may draw on bank facts too, phrased at exactly their stated strength (coursework stays coursework, workflow stays workflow), and should surface the bank facts this JD rewards. Anything found in neither the resume nor the bank stays out entirely.
 
 RUBRIC:
 `;
@@ -480,6 +480,11 @@ Preferred
 - A habit of finishing what you start, and of asking about the things that look wrong`;
 
   // --- Personal data: intentionally NOT in this repo. ---
+  // BANK is the background bank: the only material the model may draw on beyond
+  // the pasted resume. SAMPLE_RESUME is an optional test resume for the
+  // "Load saved test inputs" button. Both are empty here by design; supply your
+  // own before publishing (see README). Empty values degrade gracefully:
+  // no bank facts are offered and the test-inputs button hides itself.
   const SAMPLE_RESUME = "";
   const BANK = "";
 
@@ -508,7 +513,7 @@ Reply with ONLY a JSON object:
     if (savedResume) resumeEl.value = savedResume;
     if (savedQ) qEl.value = savedQ;
   } catch (e) { /* storage unavailable; fine */ }
-  if (!jdEl.value && !resumeEl.value) { jdEl.value = SAMPLE_JD; resumeEl.value = SAMPLE_RESUME; }
+  if (!jdEl.value && !resumeEl.value && SAMPLE_RESUME) { jdEl.value = SAMPLE_JD; resumeEl.value = SAMPLE_RESUME; }
 
   const updateCount = (el, label) => { label.textContent = el.value.length.toLocaleString() + " chars"; };
   const persist = () => {
@@ -590,6 +595,7 @@ Reply with ONLY a JSON object:
     } finally { fileInput.value = ""; }
   });
 
+  if (!SAMPLE_RESUME) $("load-sample").hidden = true;
   $("load-sample").addEventListener("click", () => {
     jdEl.value = SAMPLE_JD; resumeEl.value = SAMPLE_RESUME; persist();
     updateCount(jdEl, $("jd-count")); updateCount(resumeEl, $("resume-count"));
@@ -647,7 +653,7 @@ Reply with ONLY a JSON object:
     let writing = false;
 
     const prompt = PROMPT_HEAD + RUBRIC +
-      "\n\n" + BANK +
+      (BANK ? "\n\n" + BANK : "") +
       "\n\nJOB DESCRIPTION:\n" + clamp(jd, 12000) +
       "\n\nRESUME:\n" + clamp(resume, 12000);
 
@@ -685,7 +691,7 @@ Reply with ONLY a JSON object:
     const started = Date.now();
 
     const jd = jdEl.value.trim();
-    const prompt = Q_PROMPT_HEAD + BANK +
+    const prompt = Q_PROMPT_HEAD + (BANK || "BACKGROUND BANK: none supplied. Ground answers in the RESUME alone, and say so in \"gap\" when a question needs material the resume lacks.") +
       "\n\nRESUME:\n" + clamp(resume, 10000) +
       (jd ? "\n\nJOB DESCRIPTION:\n" + clamp(jd, 8000) : "") +
       "\n\nAPPLICATION QUESTIONS:\n" + clamp(questions, 6000);
