@@ -181,6 +181,12 @@
     font-family: "JetBrains Mono", ui-monospace, Menlo, monospace;
     font-size: 12.5px; line-height: 1.6; margin: 0;
   }
+  .bankpane > summary { cursor: pointer; display: flex; justify-content: space-between;
+    align-items: baseline; gap: 10px; font-weight: 600; font-size: 13px;
+    letter-spacing: 0.04em; text-transform: uppercase; list-style: none; }
+  .bankpane > summary::-webkit-details-marker { display: none; }
+  .bankpane > summary::before { content: "\25B8"; margin-right: 6px; font-size: 11px; }
+  .bankpane[open] > summary::before { content: "\25BE"; }
   .opt { color: var(--muted); font-weight: 500; text-transform: none; letter-spacing: 0; }
   .addbtn { font-size: 12px; padding: 3px 10px; margin-top: 6px; color: var(--accent); border-color: var(--line); background: transparent; font-weight: 600; }
   .minibtn { font-size: 12px; padding: 2px 10px; color: var(--accent); border-color: var(--line); background: transparent; font-weight: 600; }
@@ -243,6 +249,24 @@
     </div>
     <textarea id="questions" spellcheck="false" style="min-height:110px" placeholder="Paste the application's free-response questions here, one per line or however they come. Draft answers uses Bryan's background bank plus the resume, and flags questions it has no real material for instead of inventing stories."></textarea>
   </div>
+
+  <details class="pane bankpane" id="bank-pane" style="margin-top:16px">
+    <summary class="bank-summary">
+      <span>Background bank <span class="opt">(optional, improves grounding)</span></span>
+      <span class="count" id="bank-state">not set</span>
+    </summary>
+    <p class="ev" style="margin:10px 0 8px; color:var(--muted); font-size:13px;">
+      True stories, opinions, and known gaps the model may draw on beyond the resume. It may only
+      rephrase what you put here, never invent — so be specific, and keep a KNOWN GAPS section honest.
+    </p>
+    <textarea id="bank" spellcheck="false" style="min-height:150px" placeholder="BACKGROUND BANK. These are the ONLY true stories and opinions available.&#10;&#10;STORY 1 - ...&#10;&#10;KNOWN GAPS (flag, never fill in): ..."></textarea>
+    <div style="display:flex; gap:10px; align-items:center; margin-top:10px; flex-wrap:wrap;">
+      <button class="minibtn" id="bank-save" type="button">Save</button>
+      <button class="minibtn" id="bank-clear" type="button">Clear</button>
+      <span class="count" id="bank-count">0 chars</span>
+      <span class="count" id="bank-where"></span>
+    </div>
+  </details>
 
   <div class="runbar">
     <button class="primary" id="run">Check fit</button>
@@ -480,13 +504,14 @@ Preferred
 - A habit of finishing what you start, and of asking about the things that look wrong`;
 
   // --- Personal data: intentionally NOT in this repo. ---
-  // BANK is the background bank: the only material the model may draw on beyond
-  // the pasted resume. SAMPLE_RESUME is an optional test resume for the
-  // "Load saved test inputs" button. Both are empty here by design; supply your
-  // own before publishing (see README). Empty values degrade gracefully:
-  // no bank facts are offered and the test-inputs button hides itself.
+  // SAMPLE_RESUME is an optional test resume for the "Load saved test inputs"
+  // button; empty hides that button. The background bank is NOT a constant: it
+  // is supplied at runtime through the bank pane, persisted per viewer when the
+  // db capability is available, and kept in memory for the session when it is
+  // not. Prompts read the live value through bankText().
   const SAMPLE_RESUME = "";
-  const BANK = "";
+  let BANK = "";
+  const bankText = () => BANK;
 
   const Q_PROMPT_HEAD = `You are drafting first-person answers to job application questions on behalf of Bryan Duan. Ground every sentence ONLY in the BACKGROUND BANK and RESUME below. Absolute rule: never invent an anecdote, project, tool name, opinion, metric, or detail that is not in them. If a question asks for something the bank flags as a known gap or simply does not contain, still draft what you honestly can from real material, and describe what is missing in "gap".
 
@@ -604,6 +629,76 @@ Reply with ONLY a JSON object:
 
   let samplePromise = null;
   const getSample = () => (samplePromise ??= window.claude?.use("sample") ?? Promise.resolve(null));
+  // --- Background bank: paste-first, with db persistence when available ---
+  // The pane works with no capabilities at all (session-only). When db and user
+  // both resolve, the text round-trips to data/users/<id>/bank, a subtree the
+  // platform keeps private to that viewer — the artifact owner included.
+  const bankEl = $("bank"), bankState = $("bank-state"), bankWhere = $("bank-where");
+  let bankDoc = null;                       // DocumentReference once db resolves
+
+  const BANK_KEY = "fitcheck.bank";
+  const setBankState = () => {
+    const n = BANK.length;
+    $("bank-count").textContent = n.toLocaleString() + " chars";
+    bankState.textContent = n ? "in use" : "not set";
+    bankWhere.textContent = !n ? "" : bankDoc ? "saved to your account" : "this session only";
+  };
+
+  const applyBank = (text, { persist = true } = {}) => {
+    BANK = (text || "").trim();
+    if (bankEl.value !== BANK) bankEl.value = BANK;
+    setBankState();
+    if (!persist) return Promise.resolve();
+    // localStorage is a per-browser convenience; db is the durable copy.
+    try { BANK ? localStorage.setItem(BANK_KEY, BANK) : localStorage.removeItem(BANK_KEY); } catch (e) { /* fine */ }
+    if (!bankDoc) return Promise.resolve();
+    return bankDoc.set({ text: BANK, updatedAt: Date.now() })
+      .then(() => { bankWhere.textContent = "saved to your account"; })
+      .catch((e) => {
+        bankWhere.textContent = e && e.code === "invalid_argument"
+          ? "read-only here; kept for this session"
+          : "could not save; kept for this session";
+        bankDoc = null;
+      });
+  };
+
+  try { const cached = localStorage.getItem(BANK_KEY); if (cached) applyBank(cached, { persist: false }); } catch (e) { /* fine */ }
+
+  $("bank-save").addEventListener("click", () => {
+    applyBank(bankEl.value);
+    setStatus(!BANK ? "Background bank cleared."
+      : bankDoc ? "Background bank saved to your account."
+      : "Background bank set for this session.");
+  });
+  $("bank-clear").addEventListener("click", () => {
+    bankEl.value = "";
+    applyBank("");
+    if (bankDoc) bankDoc.delete().catch(() => {});
+    setStatus("Background bank cleared.");
+  });
+  bankEl.addEventListener("input", () => {
+    $("bank-count").textContent = bankEl.value.length.toLocaleString() + " chars";
+  });
+
+  // Resolve db in the background: never block first paint, and null is normal.
+  (async () => {
+    const [db, user] = await Promise.all([window.claude?.use("db"), window.claude?.use("user")]);
+    if (!db || !user) return;                       // session-only; UI already correct
+    try {
+      const id = await user.id();
+      if (!id) return;
+      bankDoc = db.doc("data/users/" + id + "/bank");
+      const snap = await bankDoc.get();
+      if (snap.exists) {
+        const stored = String((snap.data() || {}).text || "");
+        if (stored) { applyBank(stored, { persist: false }); return; }
+      }
+      // Nothing stored yet: promote a local draft, if there is one, to the account.
+      if (BANK) await applyBank(BANK);
+      else setBankState();
+    } catch (e) { bankDoc = null; setBankState(); }
+  })();
+
   let downloadsPromise = null;
   const getDownloads = () => (downloadsPromise ??= window.claude?.use("downloads") ?? Promise.resolve(null));
 
@@ -653,7 +748,7 @@ Reply with ONLY a JSON object:
     let writing = false;
 
     const prompt = PROMPT_HEAD + RUBRIC +
-      (BANK ? "\n\n" + BANK : "") +
+      (bankText() ? "\n\n" + bankText() : "") +
       "\n\nJOB DESCRIPTION:\n" + clamp(jd, 12000) +
       "\n\nRESUME:\n" + clamp(resume, 12000);
 
@@ -691,7 +786,7 @@ Reply with ONLY a JSON object:
     const started = Date.now();
 
     const jd = jdEl.value.trim();
-    const prompt = Q_PROMPT_HEAD + (BANK || "BACKGROUND BANK: none supplied. Ground answers in the RESUME alone, and say so in \"gap\" when a question needs material the resume lacks.") +
+    const prompt = Q_PROMPT_HEAD + (bankText() || "BACKGROUND BANK: none supplied. Ground answers in the RESUME alone, and say so in \"gap\" when a question needs material the resume lacks.") +
       "\n\nRESUME:\n" + clamp(resume, 10000) +
       (jd ? "\n\nJOB DESCRIPTION:\n" + clamp(jd, 8000) : "") +
       "\n\nAPPLICATION QUESTIONS:\n" + clamp(questions, 6000);
