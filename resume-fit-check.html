@@ -1117,7 +1117,7 @@ Reply with ONLY a JSON object:
   async function buildPdfBlob(s) {
     pdflibReady ??= loadScript("https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js");
     await pdflibReady;
-    const { PDFDocument, StandardFonts } = window.PDFLib;
+    const { PDFDocument, StandardFonts, PDFName, PDFString } = window.PDFLib;
     const doc = await PDFDocument.create();
     const F = {
       reg: await doc.embedFont(StandardFonts.TimesRoman),
@@ -1134,6 +1134,10 @@ Reply with ONLY a JSON object:
     // Same test texLink uses, so the PDF underlines exactly what the .tex does.
     const isLinkish = (t) => (/@/.test(t) && !/\s/.test(t)) ||
       /^(https?:\/\/|www\.|linkedin\.com|github\.com)/i.test(String(t));
+    const linkUrl = (t) => (/@/.test(t) && !/\s/.test(t)) ? "mailto:" + t
+      : /^https?:\/\//i.test(t) ? t : "https://" + t;
+    // Rects collected on the one pass that draws; measuring passes get no page.
+    let linkRects = [];
     const wid = (t, f, sz) => f.widthOfTextAtSize(t, sz);
     const wrap = (t, f, sz, w) => {
       const out = []; let line = "";
@@ -1190,11 +1194,15 @@ Reply with ONLY a JSON object:
         let x = (W - total) / 2;
         parts.forEach((t, i) => {
           put(t, f, sz, x);
-          if (page && isLinkish(t)) page.drawLine({
-            start: { x, y: baseline - sz * 0.11 },
-            end: { x: x + widths[i], y: baseline - sz * 0.11 },
-            thickness: Math.max(0.4, sz * 0.045),
-          });
+          if (page && isLinkish(t)) {
+            page.drawLine({
+              start: { x, y: baseline - sz * 0.11 },
+              end: { x: x + widths[i], y: baseline - sz * 0.11 },
+              thickness: Math.max(0.4, sz * 0.045),
+            });
+            linkRects.push({ url: linkUrl(t), x0: x, y0: baseline - sz * 0.28,
+                             x1: x + widths[i], y1: baseline + sz * 0.85 });
+          }
           x += widths[i];
           if (i < parts.length - 1) { put(SEP, f, sz, x); x += sepW; }
         });
@@ -1282,7 +1290,21 @@ Reply with ONLY a JSON object:
     }
     // Nothing left to drop and it still overruns: shrink the rest of the way.
     if (k === null) k = fitScale(work, PDF_MIN_SCALE) ?? PDF_MIN_SCALE;
-    const fitted = layout(k, doc.addPage([W, H]), work);
+    const page = doc.addPage([W, H]);
+    linkRects = [];
+    const fitted = layout(k, page, work);
+    // \href in the .tex makes these clickable; the PDF needs Link annotations
+    // to match. Border [0,0,0] keeps the viewer from drawing its own box over
+    // the underline already drawn above.
+    if (linkRects.length) {
+      page.node.set(PDFName.of("Annots"), doc.context.obj(linkRects.map((l) =>
+        doc.context.register(doc.context.obj({
+          Type: "Annot", Subtype: "Link",
+          Rect: [l.x0, l.y0, l.x1, l.y1],
+          Border: [0, 0, 0],
+          A: { Type: "Action", S: "URI", URI: PDFString.of(l.url) },
+        })))));
+    }
 
     const bytes = await doc.save();
     return { blob: new Blob([bytes], { type: "application/pdf" }), fitted, dropped };
