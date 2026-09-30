@@ -38,7 +38,7 @@ const ANALYSIS = {
 };
 
 // The page's own globals, as the builder expects to find them.
-global.window = { PDFLib: { PDFDocument, StandardFonts } };
+global.window = { PDFLib: { PDFDocument, StandardFonts, PDFName, PDFString: PDFLib.PDFString } };
 const preamble = `const jdEl = { value: ${JSON.stringify(JD)} };\nlet lastAnalysis = ${JSON.stringify(ANALYSIS)};\n`;
 const buildPdfBlob = new Function(
   "loadScript",

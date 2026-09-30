@@ -2,14 +2,14 @@
 
 An AI-powered ATS-style resume checker, built as a single-file web app and developed almost entirely by directing an AI coding agent.
 
-Paste a job description and a resume (or upload a PDF/DOCX). The app judges the fit against an explicit rubric and returns either "not a fit" with the hard gaps named, or a tailored resume, with a requirement-by-requirement evidence table, missing keywords, and a match score. It can also draft answers to application questions grounded in a background bank of real experience, accept user-supplied evidence for gaps, and export the tailored resume as a PDF or a LaTeX file in the Jake's Resume format.
+Paste a job description and a resume (or upload a PDF/DOCX). The app judges the fit against an explicit rubric and returns either "not a fit" with the hard gaps named, or a tailored resume, with a requirement-by-requirement evidence table, missing keywords, and a match score. It can also draft answers to application questions grounded in a background bank of real experience, draft a cover letter (from the tailored resume when there is one), accept user-supplied evidence for gaps, and export the tailored resume as a PDF or a LaTeX file in the Jake's Resume format.
 
 ## Architecture
 
 The entire app is one file, `resume-fit-check.html`: vanilla HTML/CSS/JS, no framework, no build step.
 
 - **Hosting/runtime:** published as a Claude artifact. The platform provides hosting, auth, and the AI runtime; the page has no server of its own.
-- **AI calls:** four prompt pipelines, each a standalone structured call: fit analysis (JSON with a strict schema), application-question drafting, resume structuring for export, and evidence-based resume revision. A no-fabrication rule runs through all of them: outputs may only rephrase, reorder, or surface facts present in the resume or the background bank, never invent.
+- **AI calls:** five prompt pipelines, each a standalone structured call: fit analysis (JSON with a strict schema), application-question drafting, cover letter drafting, resume structuring for export, and evidence-based resume revision. A no-fabrication rule runs through all of them: outputs may only rephrase, reorder, or surface facts present in the resume or the background bank, never invent.
 - **Document parsing:** pdf.js and mammoth.js, loaded on demand from CDN, run client-side for PDF/DOCX upload.
 - **Exports:** the tailored resume is converted once to structured JSON, then rendered deterministically two ways: a PDF drawn in the browser with pdf-lib (standard Times fonts, Jake's Resume layout), and a LaTeX file built on the verbatim Jake's Resume template (MIT), which compiles with pdflatex. The PDF is always exactly one page (see below); the LaTeX export stays complete.
 

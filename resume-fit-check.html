@@ -208,6 +208,15 @@
     padding: 6px 10px; font-size: 13px; margin-top: 8px; max-width: 70ch;
   }
   .answer .acts { margin-top: 8px; }
+  textarea.letter {
+    background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px;
+    min-height: 420px; font-size: 13px; line-height: 1.6;
+  }
+  .cover-gaps {
+    background: var(--warn-bg); color: var(--warn); border-radius: 6px;
+    padding: 8px 12px; font-size: 13px; margin-bottom: 12px;
+  }
+  .cover-gaps ul { margin: 4px 0 0; padding-left: 20px; }
   .foot { color: var(--muted); font-size: 12.5px; margin-top: 26px; max-width: 75ch; }
   @media (prefers-reduced-motion: no-preference) {
     .spin { display: inline-block; animation: spin 1s linear infinite; }
@@ -250,6 +259,19 @@
     <textarea id="questions" spellcheck="false" style="min-height:110px" placeholder="Paste the application's free-response questions here, one per line or however they come. Draft answers uses Bryan's background bank plus the resume, and flags questions it has no real material for instead of inventing stories."></textarea>
   </div>
 
+  <details class="pane bankpane" id="cover-pane" style="margin-top:16px">
+    <summary class="bank-summary">
+      <span>Cover letter notes <span class="opt">(optional)</span></span>
+      <span class="count" id="cover-notes-count">0 chars</span>
+    </summary>
+    <p class="ev" style="margin:10px 0 8px; color:var(--muted); font-size:13px;">
+      Anything true the letter should say that isn't in the resume: why this company, how you heard
+      about the role, the hiring manager's name. Draft cover letter works without it, but it will
+      only name motivations you state here or in the background bank.
+    </p>
+    <textarea id="cover-notes" spellcheck="false" style="min-height:90px" placeholder="e.g. Hiring manager: Jane Smith. I use their product daily for studying; referred by a current engineer, Alex Kim."></textarea>
+  </details>
+
   <details class="pane bankpane" id="bank-pane" style="margin-top:16px">
     <summary class="bank-summary">
       <span>Background bank <span class="opt">(optional, improves grounding)</span></span>
@@ -271,6 +293,7 @@
   <div class="runbar">
     <button class="primary" id="run">Check fit</button>
     <button class="primary" id="run-questions">Draft answers</button>
+    <button class="primary" id="run-cover">Draft cover letter</button>
     <button class="ghost" id="load-sample">Load saved test inputs</button>
     <button class="ghost" id="stop" hidden>Stop</button>
     <span class="status" id="status"></span>
@@ -307,6 +330,16 @@
       <h2>Drafted answers</h2>
       <p class="ev" style="margin:0 0 14px; color:var(--muted); font-size:13.5px;">Drafts grounded only in the background bank and resume. Edit before submitting; a flagged question means the bank has no real material for it.</p>
       <div id="answers"></div>
+    </section>
+
+    <section class="card" id="cover-card" hidden>
+      <h2>Cover letter</h2>
+      <div class="resume-actions">
+        <button id="cover-copy">Copy text</button>
+        <button id="cover-pdf" hidden>Download PDF</button>
+      </div>
+      <div class="cover-gaps" id="cover-gaps" hidden></div>
+      <textarea class="letter" id="cover-text" spellcheck="true" aria-label="Cover letter draft"></textarea>
     </section>
 
     <section class="card" id="resume-card" hidden>
@@ -530,8 +563,24 @@ Reply with ONLY a JSON object:
 
 `;
 
+  const COVER_PROMPT_HEAD = `You are drafting a cover letter for the candidate whose RESUME is below, for the JOB DESCRIPTION below. Ground every claim ONLY in the RESUME, the BACKGROUND BANK, and the CANDIDATE NOTES. Absolute rule: never invent an anecdote, project, tool, metric, motivation, connection to the company, or fact about the company. Facts about the company may come only from the JOB DESCRIPTION or the CANDIDATE NOTES. If the letter would be stronger with something the sources lack (a reason for wanting this company, a hiring manager's name), leave it out and list it in "gaps" instead.
+
+Shape: greeting ("Dear <name from the notes>," or "Dear Hiring Manager,"), then 3-4 short paragraphs, 250-350 words in all: an opening that names the role and the candidate's strongest relevant fact; one or two paragraphs mapping the job's top requirements to concrete evidence, outcomes and numbers kept exactly as stated; a brief close. Then "Sincerely," and the candidate's name. No date, address block, or letterhead; the page adds those.
+
+Voice: plain, specific, confident, first person. No corporate filler, no "I am passionate about", no "I am writing to express my interest". Concrete nouns and outcomes over adjectives. Evidence is phrased at exactly its stated strength: coursework stays coursework.
+
+Reply with ONLY a JSON object:
+{
+  "name": "<the candidate's full name in normal capitalization, from the resume>",
+  "contact": ["<each contact item from the resume's header as its own string: location, email, phone, URL>"],
+  "letter": "<the complete letter as plain text, greeting through signature, paragraphs separated by a blank line>",
+  "gaps": ["<what the candidate should add or verify before sending, empty if none>"]
+}
+
+`;
+
   // Per-viewer convenience: restore the last inputs typed here.
-  const qEl = $("questions");
+  const qEl = $("questions"), coverNotesEl = $("cover-notes");
   try {
     const savedJD = localStorage.getItem("fitcheck.jd");
     const savedResume = localStorage.getItem("fitcheck.resume");
@@ -539,6 +588,8 @@ Reply with ONLY a JSON object:
     if (savedJD) jdEl.value = savedJD;
     if (savedResume) resumeEl.value = savedResume;
     if (savedQ) qEl.value = savedQ;
+    const savedNotes = localStorage.getItem("fitcheck.coverNotes");
+    if (savedNotes) coverNotesEl.value = savedNotes;
   } catch (e) { /* storage unavailable; fine */ }
   if (!jdEl.value && !resumeEl.value && SAMPLE_RESUME) { jdEl.value = SAMPLE_JD; resumeEl.value = SAMPLE_RESUME; }
 
@@ -548,12 +599,15 @@ Reply with ONLY a JSON object:
       localStorage.setItem("fitcheck.jd", jdEl.value);
       localStorage.setItem("fitcheck.resume", resumeEl.value);
       localStorage.setItem("fitcheck.questions", qEl.value);
+      localStorage.setItem("fitcheck.coverNotes", coverNotesEl.value);
     } catch (e) { /* fine */ }
   };
   jdEl.addEventListener("input", () => { updateCount(jdEl, $("jd-count")); persist(); });
   resumeEl.addEventListener("input", () => { updateCount(resumeEl, $("resume-count")); persist(); });
   qEl.addEventListener("input", () => { updateCount(qEl, $("questions-count")); persist(); });
+  coverNotesEl.addEventListener("input", () => { updateCount(coverNotesEl, $("cover-notes-count")); persist(); });
   updateCount(jdEl, $("jd-count")); updateCount(resumeEl, $("resume-count")); updateCount(qEl, $("questions-count"));
+  updateCount(coverNotesEl, $("cover-notes-count"));
 
   // In-page file upload: extract text locally in the browser, nothing leaves the page.
   const loadScript = (src) => new Promise((res, rej) => {
@@ -719,8 +773,9 @@ Reply with ONLY a JSON object:
   let ctl = null;
   let lastStruct = null;
   let lastAnalysis = null; // the graded requirements, reused to score bullets on export
-  const qBtn = $("run-questions");
-  const setBusy = (b) => { runBtn.disabled = b; qBtn.disabled = b; stopBtn.hidden = !b; };
+  let lastCover = null;   // {name, contact} from the cover letter call, for its PDF header
+  const qBtn = $("run-questions"), coverBtn = $("run-cover");
+  const setBusy = (b) => { runBtn.disabled = b; qBtn.disabled = b; coverBtn.disabled = b; stopBtn.hidden = !b; };
   const setStatus = (msg, isErr) => {
     statusEl.textContent = msg;
     statusEl.classList.toggle("err", !!isErr);
@@ -807,6 +862,75 @@ Reply with ONLY a JSON object:
     } finally {
       setBusy(false); ctl = null;
     }
+  });
+
+  coverBtn.addEventListener("click", async () => {
+    const jd = jdEl.value.trim();
+    if (!jd) { setStatus("Paste the job description first; the letter is written to it.", true); return; }
+    // Prefer the tailored resume when there is one: it is what gets sent alongside.
+    const tailored = !$("resume-card").hidden ? $("tailored").textContent.trim() : "";
+    const resume = tailored || resumeEl.value.trim();
+    if (!resume) { setStatus("Paste the resume too; the letter is grounded in it.", true); return; }
+
+    const sample = await getSample();
+    if (!sample) { setStatus("Claude analysis isn't available in this view.", true); return; }
+
+    ctl = new AbortController();
+    setBusy(true);
+    setStatus(`Drafting a cover letter from the ${tailored ? "tailored " : ""}resume... usually 20 to 60 seconds.`);
+    const started = Date.now();
+
+    const notes = coverNotesEl.value.trim();
+    const prompt = COVER_PROMPT_HEAD +
+      (bankText() || "BACKGROUND BANK: none supplied.") +
+      "\n\nCANDIDATE NOTES:\n" + (notes ? clamp(notes, 4000) : "none supplied.") +
+      "\n\nRESUME:\n" + clamp(resume, 12000) +
+      "\n\nJOB DESCRIPTION:\n" + clamp(jd, 12000);
+
+    try {
+      const data = await sample.json(prompt, {
+        cache: false,
+        signal: ctl.signal,
+        onText: ({ text }) => setStatus(`Writing the letter... ${text.length.toLocaleString()} characters so far.`),
+      });
+      renderCover(data);
+      setStatus("Done in " + Math.round((Date.now() - started) / 1000) + "s.");
+    } catch (e) {
+      if (e && e.code === "cancelled") setStatus("Stopped.");
+      else setStatus(ERROR_COPY[e && e.code] || "Drafting failed. Try again.", true);
+    } finally {
+      setBusy(false); ctl = null;
+    }
+  });
+
+  function renderCover(d) {
+    const letter = d && typeof d.letter === "string" ? d.letter.trim() : "";
+    if (!letter) { setStatus(ERROR_COPY.invalid_json, true); return; }
+    lastCover = {
+      name: String(d.name || "").trim(),
+      contact: Array.isArray(d.contact) ? d.contact.map(String).filter(Boolean) : [],
+    };
+    $("cover-text").value = letter;
+    const gaps = Array.isArray(d.gaps) ? d.gaps.filter(Boolean) : [];
+    const gapBox = $("cover-gaps");
+    gapBox.replaceChildren();
+    gapBox.hidden = !gaps.length;
+    if (gaps.length) {
+      const b = document.createElement("b"); b.textContent = "Check before sending:";
+      const ul = document.createElement("ul");
+      ul.append(...gaps.map(g => { const li = document.createElement("li"); li.textContent = String(g); return li; }));
+      gapBox.append(b, ul);
+    }
+    $("cover-card").hidden = false;
+    results.hidden = false;
+    $("cover-card").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  $("cover-copy").addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText($("cover-text").value);
+      setStatus("Cover letter copied.");
+    } catch (e) { setStatus("Couldn't copy automatically; select the text and copy it manually.", true); }
   });
 
   function renderAnswers(d) {
@@ -1114,6 +1238,18 @@ Reply with ONLY a JSON object:
   };
 
   let pdflibReady = null;
+  // Shared by the resume and cover letter PDFs.
+  // Standard fonts use WinAnsi encoding; swap what it can't represent.
+  const san = (t) => String(t ?? "")
+    .replace(/[–—]/g, "-").replace(/[‘’]/g, "'")
+    .replace(/[“”]/g, '"').replace(/…/g, "...")
+    .replace(/[^\x20-\x7E\xA0-\xFF•]/g, "?");
+  // Same test texLink uses, so the PDF underlines exactly what the .tex does.
+  const isLinkish = (t) => (/@/.test(t) && !/\s/.test(t)) ||
+    /^(https?:\/\/|www\.|linkedin\.com|github\.com)/i.test(String(t));
+  const linkUrl = (t) => (/@/.test(t) && !/\s/.test(t)) ? "mailto:" + t
+    : /^https?:\/\//i.test(t) ? t : "https://" + t;
+
   async function buildPdfBlob(s) {
     pdflibReady ??= loadScript("https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js");
     await pdflibReady;
@@ -1126,16 +1262,6 @@ Reply with ONLY a JSON object:
     };
     const W = 612, H = 792, M = 40, CW = W - 2 * M;
 
-    // Standard fonts use WinAnsi encoding; swap what it can't represent.
-    const san = (t) => String(t ?? "")
-      .replace(/[–—]/g, "-").replace(/[‘’]/g, "'")
-      .replace(/[“”]/g, '"').replace(/…/g, "...")
-      .replace(/[^\x20-\x7E\xA0-\xFF•]/g, "?");
-    // Same test texLink uses, so the PDF underlines exactly what the .tex does.
-    const isLinkish = (t) => (/@/.test(t) && !/\s/.test(t)) ||
-      /^(https?:\/\/|www\.|linkedin\.com|github\.com)/i.test(String(t));
-    const linkUrl = (t) => (/@/.test(t) && !/\s/.test(t)) ? "mailto:" + t
-      : /^https?:\/\//i.test(t) ? t : "https://" + t;
     // Rects collected on the one pass that draws; measuring passes get no page.
     let linkRects = [];
     const wid = (t, f, sz) => f.widthOfTextAtSize(t, sz);
@@ -1342,6 +1468,25 @@ Reply with ONLY a JSON object:
   (async () => {
     const downloads = await getDownloads();
     if (!downloads) return;
+    const coverPdfBtn = $("cover-pdf");
+    coverPdfBtn.hidden = false;
+    coverPdfBtn.addEventListener("click", async () => {
+      const letter = $("cover-text").value.trim();
+      if (!letter) { setStatus("Draft a cover letter first.", true); return; }
+      coverPdfBtn.disabled = true;
+      try {
+        setStatus("Rendering the cover letter PDF...");
+        const { blob, pages } = await buildLetterPdf(letter, lastCover || {});
+        await downloads.save({ filename: "cover-letter.pdf", data: blob });
+        setStatus(pages > 1
+          ? `Saved cover-letter.pdf. It runs ${pages} pages; a cover letter reads best on one, so consider trimming it.`
+          : "Saved cover-letter.pdf.");
+      } catch (e) {
+        if (e && e.code === "declined") setStatus("Save canceled.");
+        else setStatus(ERROR_COPY[e && e.code] || "The PDF export failed. Try again.", true);
+      } finally { coverPdfBtn.disabled = false; }
+    });
+
     const saveBtn = $("save"), pdfBtn = $("save-pdf");
     saveBtn.hidden = false; pdfBtn.hidden = false;
     const busy = (b) => { saveBtn.disabled = b; pdfBtn.disabled = b; };
@@ -1379,5 +1524,81 @@ Reply with ONLY a JSON object:
       } finally { busy(false); }
     });
   })();
+
+  // The cover letter PDF: the resume's header (name, linked contact line) over
+  // a plain business letter body in the same Times face, so the two read as a set.
+  // Unlike the resume it flows onto a second page rather than cutting anything:
+  // the letter is prose the user may have just edited by hand.
+  async function buildLetterPdf(letter, head) {
+    pdflibReady ??= loadScript("https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js");
+    await pdflibReady;
+    const { PDFDocument, StandardFonts, PDFName, PDFString } = window.PDFLib;
+    const doc = await PDFDocument.create();
+    const reg = await doc.embedFont(StandardFonts.TimesRoman);
+    const bold = await doc.embedFont(StandardFonts.TimesRomanBold);
+    const W = 612, H = 792, M = 72, CW = W - 2 * M, SZ = 11.5, LEAD = SZ * 1.4;
+    const wid = (t, f, sz) => f.widthOfTextAtSize(t, sz);
+
+    let page = doc.addPage([W, H]), y = H - 60, pages = 1;
+    const newPage = () => { page = doc.addPage([W, H]); y = H - M; pages++; };
+
+    const name = san(head.name || "").trim();
+    if (name) {
+      page.drawText(name, { x: (W - wid(name, bold, 21)) / 2, y: y - 21, size: 21, font: bold });
+      y -= 21 * 1.3 + 3;
+    }
+    const parts = (head.contact || []).map((t) => san(t).trim()).filter(Boolean);
+    if (parts.length) {
+      const sz = 9.5, SEP = "  |  ", sepW = wid(SEP, reg, sz);
+      const widths = parts.map((t) => wid(t, reg, sz));
+      const baseline = y - sz, links = [];
+      let x = (W - widths.reduce((a, b) => a + b, 0) - sepW * (parts.length - 1)) / 2;
+      parts.forEach((t, i) => {
+        page.drawText(t, { x, y: baseline, size: sz, font: reg });
+        if (isLinkish(t)) {
+          page.drawLine({ start: { x, y: baseline - sz * 0.11 }, end: { x: x + widths[i], y: baseline - sz * 0.11 },
+                          thickness: Math.max(0.4, sz * 0.045) });
+          links.push(doc.context.register(doc.context.obj({
+            Type: "Annot", Subtype: "Link", Rect: [x, baseline - sz * 0.28, x + widths[i], baseline + sz * 0.85],
+            Border: [0, 0, 0], A: { Type: "Action", S: "URI", URI: PDFString.of(linkUrl(t)) },
+          })));
+        }
+        x += widths[i];
+        if (i < parts.length - 1) { page.drawText(SEP, { x, y: baseline, size: sz, font: reg }); x += sepW; }
+      });
+      if (links.length) page.node.set(PDFName.of("Annots"), doc.context.obj(links));
+      y -= sz * 1.3;
+    }
+    if (name || parts.length) {
+      y -= 8;
+      page.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 0.8 });
+      y -= 28;
+    }
+
+    const date = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+    const paras = [date, ...letter.replace(/\r/g, "").split(/\n\s*\n/)];
+    for (const para of paras) {
+      // Keep single line breaks (the "Sincerely,\nName" sign-off) as breaks.
+      for (const raw of para.split("\n")) {
+        const words = san(raw).split(/\s+/).filter(Boolean);
+        let line = "";
+        const flush = () => {
+          if (y - LEAD < M) newPage();
+          page.drawText(line, { x: M, y: y - SZ, size: SZ, font: reg });
+          y -= LEAD; line = "";
+        };
+        for (const w of words) {
+          const cand = line ? line + " " + w : w;
+          if (wid(cand, reg, SZ) <= CW || !line) line = cand;
+          else { flush(); line = w; }
+        }
+        if (line) flush();
+      }
+      y -= SZ * 0.9;
+    }
+
+    const bytes = await doc.save();
+    return { blob: new Blob([bytes], { type: "application/pdf" }), pages };
+  }
 })();
 </script>
