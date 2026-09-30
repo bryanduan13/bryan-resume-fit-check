@@ -256,7 +256,7 @@
       <label for="questions">Application questions <span class="opt">(optional)</span></label>
       <span class="count" id="questions-count">0 chars</span>
     </div>
-    <textarea id="questions" spellcheck="false" style="min-height:110px" placeholder="Paste the application's free-response questions here, one per line or however they come. Draft answers uses Bryan's background bank plus the resume, and flags questions it has no real material for instead of inventing stories."></textarea>
+    <textarea id="questions" spellcheck="false" style="min-height:110px" placeholder="Paste the application's free-response questions here, one per line or however they come. Draft answers uses your background bank plus the resume, and flags questions it has no real material for instead of inventing stories."></textarea>
   </div>
 
   <details class="pane bankpane" id="cover-pane" style="margin-top:16px">
@@ -355,7 +355,7 @@
     </section>
   </div>
 
-  <p class="foot">Judgment follows the rubric saved in the "Ats Bs" project (reject on hard capability gaps, tailor on wording gaps; tailoring only rephrases and reorders what the resume already contains). Analysis runs on your Claude account and usually takes 30 to 90 seconds.</p>
+  <p class="foot">Judgment follows the rubric in docs/rubric.md (reject on hard capability gaps, tailor on wording gaps; tailoring only rephrases and reorders what the resume already contains). Analysis runs on your Claude account and usually takes 30 to 90 seconds.</p>
 </div>
 
 <script>
@@ -519,7 +519,7 @@ RESUME:
 
 `;
 
-  // Saved test inputs from the project (Study.com JD + Bryan Duan resume), loadable on demand.
+  // Saved test inputs from the project (a public job posting, plus an optional resume), loadable on demand.
   const SAMPLE_JD = `Study.com - AI-Native Software Engineer
 
 Study.com is an education technology company that provides online college credit and test-preparation solutions and uses artificial intelligence and learning science to improve educational access and outcomes. The AI-Native Software Engineer will build and ship software features with AI coding agents, work across Java, Spring, MySQL, TypeScript, and React, and contribute to testing, code review, observability, and improvements to agent skills and guardrails.
@@ -548,7 +548,7 @@ Preferred
   let BANK = "";
   const bankText = () => BANK;
 
-  const Q_PROMPT_HEAD = `You are drafting first-person answers to job application questions on behalf of Bryan Duan. Ground every sentence ONLY in the BACKGROUND BANK and RESUME below. Absolute rule: never invent an anecdote, project, tool name, opinion, metric, or detail that is not in them. If a question asks for something the bank flags as a known gap or simply does not contain, still draft what you honestly can from real material, and describe what is missing in "gap".
+  const Q_PROMPT_HEAD = `You are drafting first-person answers to job application questions on behalf of the candidate whose RESUME is below. Ground every sentence ONLY in the BACKGROUND BANK and RESUME below. Absolute rule: never invent an anecdote, project, tool name, opinion, metric, or detail that is not in them. If a question asks for something the bank flags as a known gap or simply does not contain, still draft what you honestly can from real material, and describe what is missing in "gap".
 
 Voice: plain, specific, confident, first person. No corporate filler, no "I am passionate about". Concrete nouns and outcomes over adjectives. Default length 120-200 words per answer unless the question implies shorter or longer. If a JOB DESCRIPTION is provided, angle answers toward it.
 
@@ -557,7 +557,7 @@ Reply with ONLY a JSON object:
   "answers": [
     {"question": "<the question, verbatim or lightly trimmed>",
      "answer": "<the drafted answer>",
-     "gap": "<what only Bryan can add or verify before submitting, or null if the answer is fully grounded>"}
+     "gap": "<what only the candidate can add or verify before submitting, or null if the answer is fully grounded>"}
   ]
 }
 
@@ -945,7 +945,7 @@ Reply with ONLY a JSON object:
       box.append(h, body);
       if (a.gap) {
         const g = document.createElement("div"); g.className = "gap";
-        g.textContent = "Needs Bryan: " + String(a.gap);
+        g.textContent = "Needs you: " + String(a.gap);
         box.append(g);
       }
       const acts = document.createElement("div"); acts.className = "acts";

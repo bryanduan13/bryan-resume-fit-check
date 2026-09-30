@@ -18,18 +18,15 @@ The entire app is one file, `resume-fit-check.html`: vanilla HTML/CSS/JS, no fra
 - LaTeX is never written by the AI. An early version asked the model to emit LaTeX inside JSON; escaping failures made whole responses unparseable. Both exports now render deterministically from structured data, so that failure class is gone rather than rare.
 - The PDF is one page by construction, not by luck. The layout runs as a measuring pass over a type scale, taking the largest scale that fits. Below a readable floor (`PDF_COMFORT_SCALE`, 0.85) it stops shrinking and drops the weakest bullet instead, then re-searches from full size. It never empties an entry, never touches the caller's struct, and names every bullet it cut in the UI, because silently deleting resume content is worse than a second page. Cutting is scored deterministically, not by an AI call: term overlap with the JD (weighted by the analysis's own required/preferred grading), a bonus for hard numbers, and a small capped tiebreak for older jobs and lower bullets. The cap matters — an uncapped per-job penalty outranks what a bullet says once a resume runs long, and starts cutting real evidence ahead of filler.
 - The judgment rubric (reject on capability gaps, tailor on wording gaps) lives in `docs/rubric.md` and is mirrored in the page's prompt.
-- Personal data (the background bank, test resumes) is deliberately not in this repo. `BANK` and `SAMPLE_RESUME` in `resume-fit-check.html` ship empty; the deployed page carries the real values.
+- Personal data (the background bank, test resumes) is deliberately not in this repo. The background bank is pasted into the page at runtime and saved per viewer, never in the source; `SAMPLE_RESUME` ships empty.
 
 ## Using this yourself
 
-This page is not runnable standalone: `window.claude` exists only inside the claude.ai artifact viewer, so opening the file locally gives you no AI calls and no exports. To use it, publish `resume-fit-check.html` as your own artifact with the `sample` and `downloads` capabilities.
+This page is not runnable standalone: `window.claude` exists only inside the claude.ai artifact viewer, so opening the file locally gives you no AI calls and no exports. To use it, publish `resume-fit-check.html` as your own artifact with the `sample` and `downloads` capabilities, plus `db` and `user` if you want the background bank to persist.
 
-Supply your own background bank by filling in the two constants near the top of the script:
+Paste your background bank into the "Background bank" pane on the page and hit Save. It is the only material the model may draw on beyond the pasted resume, so be specific and verifiable; the no-fabrication rule means vague entries produce vague tailoring. A `KNOWN GAPS` section is worth keeping honest, since the rubric uses it to flag rather than invent. With `db` and `user` granted, the bank is saved to your account, private to you even from the artifact's owner; without them it lasts for the session.
 
-- `BANK` — the only material the model may draw on beyond the pasted resume. Be specific and verifiable; the no-fabrication rule means vague entries produce vague tailoring. A `KNOWN GAPS` section is worth keeping honest, since the rubric uses it to flag rather than invent.
-- `SAMPLE_RESUME` — optional test resume for the "Load saved test inputs" button, which hides itself when this is empty.
-
-Keep them out of version control (`*.local.js` is gitignored) and inject them before publishing.
+`SAMPLE_RESUME`, near the top of the script, is an optional test resume for the "Load saved test inputs" button, which hides itself when it is empty. If you fill it in, keep that copy out of version control (`*.local.js` and `*.local.txt` are gitignored).
 
 ## Tests
 
