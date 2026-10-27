@@ -1,38 +1,65 @@
 # Resume Fit Check
 
-An AI-powered ATS-style resume checker, built as a single-file web app and developed almost entirely by directing an AI coding agent.
+An AI-powered, ATS-style resume checker that tells you honestly whether you fit a job, and if you do, tailors your resume for it without inventing anything. It is a single-file web app, built almost entirely by directing an AI coding agent.
 
-Paste a job description and a resume (or upload a PDF/DOCX). The app judges the fit against an explicit rubric and returns either "not a fit" with the hard gaps named, or a tailored resume, with a requirement-by-requirement evidence table, missing keywords, and a match score. It can also draft answers to application questions grounded in a background bank of real experience, draft a cover letter (from the tailored resume when there is one), accept user-supplied evidence for gaps, and export the tailored resume as a PDF or a LaTeX file in the Jake's Resume format.
+Paste a job description and your resume (or upload a PDF/DOCX). You get one of two verdicts:
+
+- **Not a fit:** the hard gaps are named, each tied to the rubric rule it breaks.
+- **Fit with tailoring:** a rewritten resume aimed at this posting, plus a requirement-by-requirement evidence table, the keywords you're missing, and a 0–100 match score.
+
+## Features
+
+- **Rubric-based fit analysis.** Every requirement in the posting is rated STRONG, PARTIAL, or MISSING, with the evidence quoted. Required items weigh 3x preferred.
+- **Tailored resume.** Rephrased, reordered, and re-emphasized for the posting, using only facts from your resume or background bank.
+- **Add evidence.** Under any PARTIAL or MISSING requirement you can state a true fact the resume left out, and it gets woven in at exactly the strength you gave it.
+- **Background bank.** Verified experience that isn't on your resume. It counts as evidence, and anything drawn from it is flagged "not on resume" so you can see it.
+- **Application answers and cover letters.** Drafted from your resume and bank. Anything the sources can't support is listed as a gap for you to fill instead of being made up.
+- **Exports.** A one-page PDF and a LaTeX file, both in the Jake's Resume format.
+
+## How it judges
+
+The full rubric is in [`docs/rubric.md`](docs/rubric.md). The core idea is to separate a **capability gap** (you can't do the job) from an **evidence gap** (you can, but the resume doesn't say so in the posting's language). Capability gaps reject. Evidence gaps get reworded.
+
+- **Reject** when a required degree is missing, a years-of-experience bar is missed by more than half, a core skill has no evidence or adjacent equivalent, the domain is absent, or seniority is off by more than one level.
+- **Tailor** for keyword mismatches, adjacent equivalents, buried evidence, and a misaligned summary.
+- **Soft skills** (communication, ownership, teamwork, leadership) are graded, but a skill only counts as STRONG when a bullet shows it in action. Tailoring rewrites bullets to name who you worked with and what you owned, never adds adjectives like "strong communicator".
+- **Attitude traits** ("willingness to learn", passion, curiosity, self-starter) aren't graded. A resume can't prove them, so they're listed as "not graded" instead of dragging the score down. If your experience shows the trait (a tool you picked up and shipped with, self-taught projects), tailoring can surface that.
+- **No fabrication, ever.** Every prompt in the app follows the same rule: outputs may only rephrase, reorder, or surface facts you supplied.
+
+## Using it
+
+The app runs as a [Claude artifact](https://claude.ai). The platform provides hosting, sign-in, and the AI calls; the page has no server of its own. Opening the HTML file locally won't work, because `window.claude` exists only inside the claude.ai artifact viewer.
+
+1. Publish `resume-fit-check.html` as your own artifact with the `sample` and `downloads` capabilities. Add `db` and `user` if you want your background bank saved between sessions.
+2. Paste your background bank into the "Background bank" pane and hit Save. Be specific and verifiable: the no-fabrication rule means vague entries produce vague tailoring. A `KNOWN GAPS` section is worth keeping honest, since the rubric uses it to flag gaps rather than paper over them. With `db` and `user` granted, the bank is saved to your account and is private to you, even from the artifact's owner.
+3. Paste a job description and your resume, then run the check.
+
+`SAMPLE_RESUME`, near the top of the script, is an optional test resume for the "Load saved test inputs" button, which hides itself when it's empty. If you fill it in, keep that copy out of version control (`*.local.js` and `*.local.txt` are gitignored).
 
 ## Architecture
 
-The entire app is one file, `resume-fit-check.html`: vanilla HTML/CSS/JS, no framework, no build step.
+The whole app is one file, `resume-fit-check.html`: vanilla HTML, CSS, and JS, with no framework and no build step.
 
-- **Hosting/runtime:** published as a Claude artifact. The platform provides hosting, auth, and the AI runtime; the page has no server of its own.
-- **AI calls:** five prompt pipelines, each a standalone structured call: fit analysis (JSON with a strict schema), application-question drafting, cover letter drafting, resume structuring for export, and evidence-based resume revision. A no-fabrication rule runs through all of them: outputs may only rephrase, reorder, or surface facts present in the resume or the background bank, never invent.
-- **Document parsing:** pdf.js and mammoth.js, loaded on demand from CDN, run client-side for PDF/DOCX upload.
-- **Exports:** the tailored resume is converted once to structured JSON, then rendered deterministically two ways: a PDF drawn in the browser with pdf-lib (standard Times fonts, Jake's Resume layout), and a LaTeX file built on the verbatim Jake's Resume template (MIT), which compiles with pdflatex. The PDF is always exactly one page (see below); the LaTeX export stays complete.
+- **AI calls:** five prompt pipelines, each a standalone structured call: fit analysis (JSON with a strict schema), application-question drafting, cover letter drafting, resume structuring for export, and evidence-based resume revision.
+- **Document parsing:** pdf.js and mammoth.js, loaded on demand from a CDN, parse PDF and DOCX uploads in the browser.
+- **Exports:** the tailored resume is converted once to structured JSON, then rendered two ways. The PDF is drawn in the browser with pdf-lib (standard Times fonts, Jake's Resume layout). The LaTeX file is built on the verbatim Jake's Resume template (MIT) and compiles with pdflatex.
 
 ## Design decisions worth knowing
 
-- LaTeX is never written by the AI. An early version asked the model to emit LaTeX inside JSON; escaping failures made whole responses unparseable. Both exports now render deterministically from structured data, so that failure class is gone rather than rare.
-- The PDF is one page by construction, not by luck. The layout runs as a measuring pass over a type scale, taking the largest scale that fits. Below a readable floor (`PDF_COMFORT_SCALE`, 0.85) it stops shrinking and drops the weakest bullet instead, then re-searches from full size. It never empties an entry, never touches the caller's struct, and names every bullet it cut in the UI, because silently deleting resume content is worse than a second page. Cutting is scored deterministically, not by an AI call: term overlap with the JD (weighted by the analysis's own required/preferred grading), a bonus for hard numbers, and a small capped tiebreak for older jobs and lower bullets. The cap matters — an uncapped per-job penalty outranks what a bullet says once a resume runs long, and starts cutting real evidence ahead of filler.
-- The judgment rubric (reject on capability gaps, tailor on wording gaps) lives in `docs/rubric.md` and is mirrored in the page's prompt.
-- Personal data (the background bank, test resumes) is deliberately not in this repo. The background bank is pasted into the page at runtime and saved per viewer, never in the source; `SAMPLE_RESUME` ships empty.
-
-## Using this yourself
-
-This page is not runnable standalone: `window.claude` exists only inside the claude.ai artifact viewer, so opening the file locally gives you no AI calls and no exports. To use it, publish `resume-fit-check.html` as your own artifact with the `sample` and `downloads` capabilities, plus `db` and `user` if you want the background bank to persist.
-
-Paste your background bank into the "Background bank" pane on the page and hit Save. It is the only material the model may draw on beyond the pasted resume, so be specific and verifiable; the no-fabrication rule means vague entries produce vague tailoring. A `KNOWN GAPS` section is worth keeping honest, since the rubric uses it to flag rather than invent. With `db` and `user` granted, the bank is saved to your account, private to you even from the artifact's owner; without them it lasts for the session.
-
-`SAMPLE_RESUME`, near the top of the script, is an optional test resume for the "Load saved test inputs" button, which hides itself when it is empty. If you fill it in, keep that copy out of version control (`*.local.js` and `*.local.txt` are gitignored).
+- **The AI never writes LaTeX.** An early version asked the model to emit LaTeX inside JSON, and escaping failures made whole responses unparseable. Both exports now render deterministically from structured data, so that failure class is gone rather than rare.
+- **The PDF is one page by construction.** Layout runs as a measuring pass over a type scale and takes the largest scale that fits. Below a readable floor (`PDF_COMFORT_SCALE`, 0.85) it stops shrinking and drops the weakest bullet instead, then re-searches from full size. It never empties an entry and names every bullet it cut in the UI, because silently deleting resume content is worse than a second page. Cutting is scored without an AI call: term overlap with the posting (weighted by the analysis's own required/preferred grading), a bonus for hard numbers, and a small capped tiebreak for older jobs and lower bullets. The cap matters: an uncapped per-job penalty outranks what a bullet says once a resume runs long, and starts cutting real evidence ahead of filler.
+- **The rubric is mirrored.** `docs/rubric.md` and the prompt in the page must say the same thing; change both together.
+- **No personal data in the repo.** The background bank is pasted in at runtime and saved per viewer, never in the source, and `SAMPLE_RESUME` ships empty.
 
 ## Tests
 
-`node tests/build-latex.test.js` extracts the LaTeX builder from the HTML and checks its output; if `pdflatex` is installed it also compiles the result and fails on any TeX error.
+```sh
+node tests/build-latex.test.js
+node tests/build-pdf.test.js
+```
 
-`node tests/build-pdf.test.js` does the same for the PDF builder: it renders resumes of several lengths and checks that every one comes out a single page, that each section title clears the rule under it, and that when bullets have to go it is the filler that goes and never a bullet carrying a metric or a JD keyword. It needs `pdf-lib` (`npm i pdf-lib@1.17.1`) and skips if it isn't installed.
+- `build-latex.test.js` extracts the LaTeX builder from the HTML and checks its output. If `pdflatex` is installed, it also compiles the result and fails on any TeX error.
+- `build-pdf.test.js` renders resumes of several lengths and checks that each comes out a single page, that section titles clear their rules, and that when bullets have to go it's the filler that goes, never a bullet with a metric or a keyword from the posting. It needs `pdf-lib` (`npm i pdf-lib@1.17.1`) and skips if that isn't installed.
 
 ## Deploying
 
