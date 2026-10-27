@@ -156,6 +156,7 @@
   .rtype { color: var(--muted); font-size: 11px; letter-spacing: 0.06em; padding-top: 4px; }
   .req-row b { font-weight: 600; }
   .req-row .ev { color: var(--muted); font-size: 13.5px; margin-top: 2px; }
+  .traits { color: var(--muted); font-size: 13.5px; margin: 12px 0 0; }
 
   .chips { display: flex; flex-wrap: wrap; gap: 8px; }
   .chip {
@@ -314,6 +315,7 @@
     <section class="card" id="req-card" hidden>
       <h2>Requirement by requirement</h2>
       <div class="req-table" id="req-table"></div>
+      <p class="traits" id="traits" hidden></p>
     </section>
 
     <section class="card" id="kw-card" hidden>
@@ -379,7 +381,7 @@ TAILOR (verdict TAILOR) when the gaps look like:
 1. Keyword mismatch: the skill is demonstrated under a different name.
 2. Adjacent equivalent: JD prefers tool X, resume shows direct equivalent Y at real depth. Highlight the equivalence; never claim X.
 3. Buried evidence: the JD's top requirement exists but sits low or inside an unrelated bullet; reorder and re-emphasize.
-4. Soft requirements (communication, ownership): satisfy by pointing at concrete existing bullets, never by adding adjectives.
+4. Soft requirements (communication, ownership, teamwork): satisfy by rewording concrete existing bullets to show the skill in action, never by adding adjectives. See SOFT SKILLS below.
 5. Summary misalignment: reframe the summary using only true facts; the title line may be re-aimed too, but only within the title-line rule stated above.
 
 BORDERLINE RULES:
@@ -387,6 +389,10 @@ BORDERLINE RULES:
 - A required skill present only as a naked keyword in a skills list counts as weak evidence: tailor if the experience plausibly backs it, and flag it as thin.
 - In-progress education counts if completion precedes the start date.
 - When genuinely uncertain, choose TAILOR but list the weak requirements plainly.
+
+ATTITUDE TRAITS (not graded): a requirement that names only a disposition, with no skill or task behind it (willingness to learn, eagerness to grow, passion, curiosity, enthusiasm, positive attitude, growth mindset, self-starter, hard-working), is judged at interview, not on a resume. List it in "ungraded_traits" and leave it out of "requirements" and the score. When the resume or bank holds concrete evidence of it (picked up a new tool or language and shipped with it, self-taught projects, certifications or coursework earned alongside work, growing scope), the tailored resume may surface that evidence, but never state the trait itself.
+
+SOFT SKILLS (graded): communication, ownership, teamwork/collaboration, leadership, and stakeholder management stay in "requirements" and are graded like any other requirement. STRONG needs a bullet showing the skill in action with context (presented results to leadership, wrote design docs, owned a system end to end, partnered with design and QA to ship a feature). A soft skill named only as an adjective in the summary or skills list is PARTIAL at best. In the tailored resume, show these skills by rewording existing bullets to name who the candidate worked with or presented to and what they owned or drove, only where the resume or bank facts support it. Never add soft-skill adjectives ("strong communicator", "team player") to the summary.
 
 SCORING: each JD requirement gets STRONG (explicit demonstrated evidence), PARTIAL (equivalent or thin evidence), or MISSING. Required items weigh 3x preferred. Verdict NOT_A_FIT if any reject rule fires; otherwise TAILOR with a 0-100 weighted match score.`;
 
@@ -405,10 +411,11 @@ SCORING: each JD requirement gets STRONG (explicit demonstrated evidence), PARTI
   ],
   "missing_keywords": ["<JD terms absent from the resume that tailoring should surface, empty if none>"],
   "weak_points": ["<requirements that stay thin even after tailoring, empty if none>"],
+  "ungraded_traits": ["<short paraphrase of each attitude-trait requirement left out of grading, empty if none>"],
   "tailored_resume": "<when TAILOR: the complete rewritten resume as plain text, same person, same facts, reworded and reordered for this JD. When NOT_A_FIT: null>"
 }
 
-Cover every explicit requirement in the JD, required and preferred, in "requirements". Keep the tailored resume complete and self-contained (contact line, summary, experience, skills, education). Preserve every date, employer, and metric exactly as given. Job titles actually held are facts: never alter them in the experience entries.
+Cover every explicit requirement in the JD, required and preferred, in "requirements", except attitude traits, which go in "ungraded_traits" instead. Keep the tailored resume complete and self-contained (contact line, summary, experience, skills, education). Preserve every date, employer, and metric exactly as given. Job titles actually held are facts: never alter them in the experience entries.
 
 Title line: the header under the name names a professional identity — a role, optionally with core technologies ("Software Engineer | Python, TypeScript, FastAPI, Applied AI"). It may be reframed toward the role this posting is for, including "... Intern" for an internship. It must NEVER state an applicant status or intent: no "Candidate", "Applicant", "Aspiring", "Seeking", "Looking for", and no sentence about applying. It must never be weaker than a role the candidate currently holds. When in doubt, keep the resume's existing tagline unchanged.
 
@@ -1010,7 +1017,7 @@ Reply with ONLY a JSON object:
         addBtn.className = "addbtn"; addBtn.type = "button"; addBtn.textContent = "Add evidence";
         const ta = document.createElement("textarea");
         ta.className = "add-evidence"; ta.hidden = true; ta.spellcheck = false;
-        ta.placeholder = "What's actually true that covers this? e.g. Took multiple DSA courses at UCR (CS 141, CS 218). Stated facts only; they get woven into the resume.";
+        ta.placeholder = "What's actually true that covers this? e.g. Completed two data structures and algorithms courses. Stated facts only; they get woven into the resume.";
         ta.dataset.req = String(r.requirement || "");
         addBtn.addEventListener("click", () => { ta.hidden = !ta.hidden; if (!ta.hidden) ta.focus(); });
         cell.append(addBtn, ta);
@@ -1018,6 +1025,10 @@ Reply with ONLY a JSON object:
       row.append(pill, type, cell);
       table.append(row);
     }
+
+    const traits = Array.isArray(d.ungraded_traits) ? d.ungraded_traits.filter(Boolean).map(String) : [];
+    $("traits").hidden = !traits.length;
+    $("traits").textContent = traits.length ? "Not graded (attitude, judged at interview): " + traits.join("; ") : "";
 
     const kws = Array.isArray(d.missing_keywords) ? d.missing_keywords.filter(Boolean) : [];
     $("kw-card").hidden = !kws.length;
