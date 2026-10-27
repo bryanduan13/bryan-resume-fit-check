@@ -64,3 +64,7 @@ node tests/build-pdf.test.js
 ## Deploying
 
 The artifact page is the deploy target. Republishing the updated `resume-fit-check.html` to the same artifact URL is the whole release process.
+
+## License
+
+MIT; see [`LICENSE`](LICENSE). The LaTeX export builds on Jake's Resume template, also MIT.
